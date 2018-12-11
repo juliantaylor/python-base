@@ -83,13 +83,14 @@ class Watch(object):
             obj = SimpleNamespace(data=json.dumps(js['raw_object']))
             js['object'] = self._api_client.deserialize(obj, return_type)
             if hasattr(js['object'], 'metadata'):
-                self.resource_version = js['object'].metadata.resource_version
+                self.resource_version = int(
+                    js['object'].metadata.resource_version)
             # For custom objects that we don't have model defined, json
             # deserialization results in dictionary
             elif (isinstance(js['object'], dict) and 'metadata' in js['object']
                   and 'resourceVersion' in js['object']['metadata']):
-                self.resource_version = js['object']['metadata'][
-                    'resourceVersion']
+                self.resource_version = int(
+                    js['object']['metadata']['resourceVersion'])
         return js
 
     def stream(self, func, *args, **kwargs):
@@ -122,6 +123,7 @@ class Watch(object):
         return_type = self.get_return_type(func)
         kwargs['watch'] = True
         kwargs['_preload_content'] = False
+        min_resource_version = int(kwargs.get('resource_version', 0))
 
         timeouts = ('timeout_seconds' in kwargs)
         while True:
@@ -132,7 +134,13 @@ class Watch(object):
                     if self._stop:
                         break
             finally:
-                kwargs['resource_version'] = self.resource_version
+                # if the existing objects are older than the requested version
+                # continue to watch from the requested resource version
+                # does not handle overflow though that should take a few
+                # hundred years
+                kwargs['resource_version'] = max(
+                    self.resource_version, min_resource_version
+                )
                 resp.close()
                 resp.release_conn()
 

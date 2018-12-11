@@ -49,7 +49,7 @@ class WatchTests(unittest.TestCase):
             # make sure decoder worked and updated Watch.resource_version
             self.assertEqual(
                 "%d" % count, e['object'].metadata.resource_version)
-            self.assertEqual("%d" % count, w.resource_version)
+            self.assertEqual(count, w.resource_version)
             count += 1
             # make sure we can stop the watch and the last event with won't be
             # returned
@@ -61,6 +61,42 @@ class WatchTests(unittest.TestCase):
         fake_resp.read_chunked.assert_called_once_with(decode_content=False)
         fake_resp.close.assert_called_once()
         fake_resp.release_conn.assert_called_once()
+
+    def test_watch_resource_version_set(self):
+        #
+        fake_resp = Mock()
+        fake_resp.close = Mock()
+        fake_resp.release_conn = Mock()
+        values = [
+            '{"type": "ADDED", "object": {"metadata": {"name": "test1",'
+            '"resourceVersion": "1"}, "spec": {}, "status": {}}}\n',
+            '{"type": "ADDED", "object": {"metadata": {"name": "test2",'
+            '"resourceVersion": "2"}, "spec": {}, "sta',
+            'tus": {}}}\n'
+            '{"type": "ADDED", "object": {"metadata": {"name": "test3",'
+            '"resourceVersion": "3"}, "spec": {}, "status": {}}}\n'
+        ]
+        fake_resp.read_chunked = Mock(
+            return_value=values)
+
+        fake_api = Mock()
+        fake_api.get_namespaces = Mock(return_value=fake_resp)
+        fake_api.get_namespaces.__doc__ = ':return: V1NamespaceList'
+
+        w = Watch()
+        count = 1
+        # ensure we keep our requested resource version when the existing
+        # versions are older than the requested version
+        # needed for the list existing objects, then watch from there use case
+        for e in w.stream(fake_api.get_namespaces, resource_version=5):
+            count += 1
+            if count % 3 == 0:
+                fake_api.get_namespaces.assert_called_once_with(
+                    _preload_content=False, watch=True, resource_version=5)
+                fake_api.get_namespaces.reset_mock()
+            # returned
+            if count == len(values) * 3:
+                w.stop()
 
     def test_watch_stream_twice(self):
         w = Watch(float)
@@ -148,7 +184,7 @@ class WatchTests(unittest.TestCase):
         # Watch.resource_version
         self.assertTrue(isinstance(event['object'], dict))
         self.assertEqual("1", event['object']['metadata']['resourceVersion'])
-        self.assertEqual("1", w.resource_version)
+        self.assertEqual(1, w.resource_version)
 
     def test_watch_with_exception(self):
         fake_resp = Mock()
