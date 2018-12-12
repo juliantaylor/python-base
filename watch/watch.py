@@ -63,7 +63,7 @@ class Watch(object):
         self._raw_return_type = return_type
         self._stop = False
         self._api_client = client.ApiClient()
-        self.resource_version = 0
+        self._resource_version = 0
 
     def stop(self):
         self._stop = True
@@ -76,6 +76,18 @@ class Watch(object):
             return return_type[:-len(TYPE_LIST_SUFFIX)]
         return return_type
 
+    @property
+    def resource_version(self):
+        return self._resource_version
+
+    @resource_version.setter
+    def resource_version(self, value):
+        """
+        update resource version of the current watch
+        ensure the number always grow by using the maxium
+        """
+        self._resource_version = max(int(value), self._resource_version)
+
     def unmarshal_event(self, data, return_type):
         js = json.loads(data)
         js['raw_object'] = js['object']
@@ -83,14 +95,13 @@ class Watch(object):
             obj = SimpleNamespace(data=json.dumps(js['raw_object']))
             js['object'] = self._api_client.deserialize(obj, return_type)
             if hasattr(js['object'], 'metadata'):
-                self.resource_version = int(
-                    js['object'].metadata.resource_version)
+                self.resource_version = js['object'].metadata.resource_version
             # For custom objects that we don't have model defined, json
             # deserialization results in dictionary
             elif (isinstance(js['object'], dict) and 'metadata' in js['object']
                   and 'resourceVersion' in js['object']['metadata']):
-                self.resource_version = int(
-                    js['object']['metadata']['resourceVersion'])
+                self.resource_version = js['object']['metadata'][
+-                    'resourceVersion']
         return js
 
     def stream(self, func, *args, **kwargs):
