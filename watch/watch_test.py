@@ -98,6 +98,15 @@ class WatchTests(unittest.TestCase):
             if count == len(values) * 3:
                 w.stop()
 
+        count = 1
+        fake_api.get_namespaces.reset_mock()
+        # test it also works with a string resource version which you get from
+        # deserializing custom objects
+        for e in w.stream(fake_api.get_namespaces, resource_version="5"):
+            count += 1
+            if count == len(values) * 3:
+                w.stop()
+
     def test_watch_stream_twice(self):
         w = Watch(float)
         for step in ['first', 'second']:
