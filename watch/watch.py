@@ -77,21 +77,44 @@ class Watch(object):
         return return_type
 
     def unmarshal_event(self, data, return_type):
+        resource_version = None
         js = json.loads(data)
         js['raw_object'] = js['object']
         if return_type:
             obj = SimpleNamespace(data=json.dumps(js['raw_object']))
             js['object'] = self._api_client.deserialize(obj, return_type)
             if hasattr(js['object'], 'metadata'):
-                self.resource_version = int(
+                resource_version = int(
                     js['object'].metadata.resource_version)
             # For custom objects that we don't have model defined, json
             # deserialization results in dictionary
             elif (isinstance(js['object'], dict) and 'metadata' in js['object']
                   and 'resourceVersion' in js['object']['metadata']):
-                self.resource_version = int(
+                resource_version = int(
                     js['object']['metadata']['resourceVersion'])
-        return js
+        return resource_version, js
+
+    def iter_ordered(self, gen, return_type):
+        from heapq import heappush, heappop
+        pq = []
+        last_rv = -1
+        for line in iter_resp_lines(gen):
+            resource_version, obj = self.unmarshal_event(line, return_type)
+            # return objects without resource versions in the order we got it
+            # should not happen just in case of changes to unmarshal_event
+            if resource_version is None:
+                unknown = 1
+                resource_version = last_rv
+            else:
+                unknown = 0
+            heappush(pq, (resource_version, unknown, obj))
+
+        while pq:
+            resource_version, _, obj = heappop(pq)
+            self.resource_version = resource_version
+            yield obj
+            if self._stop:
+                break
 
     def stream(self, func, *args, **kwargs):
         """Watch an API resource and stream the result back via a generator.
@@ -129,10 +152,8 @@ class Watch(object):
         while True:
             resp = func(*args, **kwargs)
             try:
-                for line in iter_resp_lines(resp):
-                    yield self.unmarshal_event(line, return_type)
-                    if self._stop:
-                        break
+                for obj in self.iter_ordered(resp, return_type):
+                    yield obj
             finally:
                 # if the existing objects are older than the requested version
                 # continue to watch from the requested resource version

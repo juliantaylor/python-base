@@ -34,7 +34,9 @@ class WatchTests(unittest.TestCase):
                 'tus": {}}}\n'
                 '{"type": "ADDED", "object": {"metadata": {"name": "test3",'
                 '"resourceVersion": "3"}, "spec": {}, "status": {}}}\n',
-                'should_not_happened\n'])
+                '{"type": "ADDED", "object": {"metadata": {"name": "skipped",'
+                '"resourceVersion": "4"}, "spec": {}, "status": {}}}\n',
+                ])
 
         fake_api = Mock()
         fake_api.get_namespaces = Mock(return_value=fake_resp)
@@ -61,6 +63,36 @@ class WatchTests(unittest.TestCase):
         fake_resp.read_chunked.assert_called_once_with(decode_content=False)
         fake_resp.close.assert_called_once()
         fake_resp.release_conn.assert_called_once()
+
+    def test_watch_unordered(self):
+        fake_resp = Mock()
+        fake_resp.close = Mock()
+        fake_resp.release_conn = Mock()
+        fake_resp.read_chunked = Mock(
+            return_value=[
+                '{"type": "ADDED", "object": {"metadata": {"name": "test1",'
+                '"resourceVersion": "3"}, "spec": {}, "status": {}}}\n',
+                '{"type": "ADDED", "object": {"metadata": {"name": "test2",'
+                '"resourceVersion": "1"}, "spec": {}, "status": {}}}\n',
+                '{"type": "ADDED", "object": {"metadata": {"name": "test3",'
+                '"resourceVersion": "4"}, "spec": {}, "status": {}}}\n',
+                ])
+
+        fake_api = Mock()
+        fake_api.get_namespaces = Mock(return_value=fake_resp)
+        fake_api.get_namespaces.__doc__ = ':return: V1NamespaceList'
+
+        w = Watch()
+        count = 1
+        last_rv = 0
+        for e in w.stream(fake_api.get_namespaces):
+            # check we still got them in correct order
+            rv = int(e['object'].metadata.resource_version)
+            self.assertGreater(rv, last_rv)
+            last_rv = rv
+            count += 1
+            if count == 3:
+                w.stop()
 
     def test_watch_resource_version_set(self):
         #
@@ -168,7 +200,7 @@ class WatchTests(unittest.TestCase):
 
     def test_unmarshal_with_float_object(self):
         w = Watch()
-        event = w.unmarshal_event('{"type": "ADDED", "object": 1}', 'float')
+        resource_version, event = w.unmarshal_event('{"type": "ADDED", "object": 1}', 'float')
         self.assertEqual("ADDED", event['type'])
         self.assertEqual(1.0, event['object'])
         self.assertTrue(isinstance(event['object'], float))
@@ -176,7 +208,7 @@ class WatchTests(unittest.TestCase):
 
     def test_unmarshal_with_no_return_type(self):
         w = Watch()
-        event = w.unmarshal_event('{"type": "ADDED", "object": ["test1"]}',
+        resource_version, event = w.unmarshal_event('{"type": "ADDED", "object": ["test1"]}',
                                   None)
         self.assertEqual("ADDED", event['type'])
         self.assertEqual(["test1"], event['object'])
@@ -184,16 +216,16 @@ class WatchTests(unittest.TestCase):
 
     def test_unmarshal_with_custom_object(self):
         w = Watch()
-        event = w.unmarshal_event('{"type": "ADDED", "object": {"apiVersion":'
+        resource_version, event = w.unmarshal_event('{"type": "ADDED", "object": {"apiVersion":'
                                   '"test.com/v1beta1","kind":"foo","metadata":'
                                   '{"name": "bar", "resourceVersion": "1"}}}',
                                   'object')
         self.assertEqual("ADDED", event['type'])
+        self.assertEqual(1, resource_version)
         # make sure decoder deserialized json into dictionary and updated
         # Watch.resource_version
         self.assertTrue(isinstance(event['object'], dict))
         self.assertEqual("1", event['object']['metadata']['resourceVersion'])
-        self.assertEqual(1, w.resource_version)
 
     def test_watch_with_exception(self):
         fake_resp = Mock()
